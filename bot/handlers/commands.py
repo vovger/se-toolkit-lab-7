@@ -1,64 +1,104 @@
 import httpx
 from config import settings
+from services import LMSClient
+
+lms = LMSClient()
 
 def start() -> str:
-    return "Welcome to LMS Bot! Use /help to see available commands."
+    return (
+        "🤖 Welcome to LMS Analytics Bot!\n\n"
+        "I can help you track your progress in the course. "
+        "Use /help to see what I can do."
+    )
 
 def help() -> str:
     return (
+        "📋 Available commands:\n\n"
         "/start - Welcome message\n"
         "/help - Show this help\n"
         "/health - Check backend status\n"
         "/labs - List available labs\n"
-        "/scores <lab> - Get scores for a lab"
+        "/scores <lab> - Show tasks for a lab\n\n"
+        "Examples:\n"
+        "/scores lab-01\n"
+        "/scores Lab 01\n"
+        "/scores Lab 04"
     )
 
 def health() -> str:
     try:
-        resp = httpx.get(
-            f"{settings.lms_api_base_url}/health",
-            headers={"api-key": settings.lms_api_key},
-            timeout=5.0,
-        )
-        if resp.status_code == 200:
-            return f"Backend is OK: {resp.text}"
-        return f"Backend returned status {resp.status_code}"
+        items = lms.get_items()
+        count = len(items)
+        if count > 0:
+            return f"✅ Backend is healthy. {count} items available."
+        else:
+            return "⚠️ Backend is reachable but no data found. Try running ETL sync."
     except Exception as e:
-        return f"Error connecting to backend: {e}"
+        return f"❌ Backend error: {str(e)}"
 
 def labs() -> str:
     try:
-        resp = httpx.get(
-            f"{settings.lms_api_base_url}/items/",
-            headers={"api-key": settings.lms_api_key},
-            timeout=5.0,
-        )
-        if resp.status_code == 200:
-            items = resp.json()
-            labs = list(set(item.get("lab_name", "unknown") for item in items))
-            return "Available labs:\n" + "\n".join(labs[:10])
-        return f"Failed to fetch labs: {resp.status_code}"
+        items = lms.get_items()
+        
+        labs_list = []
+        for item in items:
+            if item.get("type") == "lab":
+                title = item.get("title", "").strip()
+                if title:
+                    labs_list.append(title)
+        
+        if not labs_list:
+            return "No labs found. Make sure backend has data (run ETL sync)."
+        
+        labs_list.sort()
+        return "📚 Available labs:\n" + "\n".join(f"- {lab}" for lab in labs_list)
     except Exception as e:
-        return f"Error: {e}"
+        return f"❌ Failed to fetch labs: {str(e)}"
 
 def scores(lab_name: str = "") -> str:
     if not lab_name:
-        return "Please specify a lab, e.g., /scores lab-04"
+        return "Please specify a lab, e.g., /scores lab-01"
+    
     try:
-        resp = httpx.get(
-            f"{settings.lms_api_base_url}/items/",
-            headers={"api-key": settings.lms_api_key},
-            timeout=5.0,
-        )
-        if resp.status_code == 200:
-            items = resp.json()
-            lab_items = [i for i in items if i.get("lab_name") == lab_name]
-            if not lab_items:
-                return f"No data found for lab {lab_name}"
-            total_score = sum(i.get("score", 0) for i in lab_items)
-            count = len(lab_items)
-            avg = total_score / count if count else 0
-            return f"Lab {lab_name}: {count} submissions, average score {avg:.2f}"
-        return f"Failed to fetch scores: {resp.status_code}"
+        lab_query = lab_name.strip().lower()
+        items = lms.get_items()
+        
+        # Ищем лабораторную
+        target_lab = None
+        lab_id = None
+        
+        for item in items:
+            if item.get("type") == "lab":
+                title = item.get("title", "")
+                title_lower = title.lower()
+                
+                # Проверяем разные форматы:
+                # - полное название
+                # - lab-01, lab-02 и т.д.
+                # - Lab 01, Lab 02 и т.д.
+                if (lab_query == title_lower or
+                    lab_query in title_lower or
+                    title_lower.startswith(lab_query) or
+                    (lab_query.startswith("lab-") and title_lower.startswith(lab_query.replace("-", " ")))):
+                    target_lab = item
+                    lab_id = item.get("id")
+                    break
+        
+        if not target_lab:
+            available = [item.get("title") for item in items if item.get("type") == "lab"]
+            return f"Lab '{lab_name}' not found. Available labs:\n" + "\n".join(f"- {lab}" for lab in available[:10])
+        
+        # Ищем задачи
+        tasks = [item for item in items if item.get("parent_id") == lab_id]
+        
+        if not tasks:
+            return f"No tasks found for {target_lab.get('title')}."
+        
+        result = f"📊 Tasks for {target_lab.get('title')}:\n\n"
+        for task in tasks:
+            task_title = task.get("title", "Unnamed task")
+            result += f"• {task_title}\n"
+        
+        return result
     except Exception as e:
-        return f"Error: {e}"
+        return f"❌ Failed to fetch scores: {str(e)}"

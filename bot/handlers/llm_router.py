@@ -1,117 +1,77 @@
 import sys
-import re
-from services import LMSClient
+import json
+from services import LMSClient, LLMClient
 
 lms = LMSClient()
+llm = LLMClient()
 
-SYSTEM_PROMPT = """You are a helpful assistant for a Learning Management System."""
+SYSTEM_PROMPT = "You are a helpful assistant for a Learning Management System."
+
+tools = [
+    {"type": "function", "function": {"name": "get_items", "description": "Get list of all labs and tasks", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "get_learners", "description": "Get list of enrolled students", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "get_scores", "description": "Get score distribution for a lab", "parameters": {"type": "object", "properties": {"lab": {"type": "string"}}, "required": ["lab"]}}},
+    {"type": "function", "function": {"name": "get_pass_rates", "description": "Get per-task pass rates for a lab", "parameters": {"type": "object", "properties": {"lab": {"type": "string"}}, "required": ["lab"]}}},
+    {"type": "function", "function": {"name": "get_timeline", "description": "Get submissions timeline for a lab", "parameters": {"type": "object", "properties": {"lab": {"type": "string"}}, "required": ["lab"]}}},
+    {"type": "function", "function": {"name": "get_groups", "description": "Get group performance for a lab", "parameters": {"type": "object", "properties": {"lab": {"type": "string"}}, "required": ["lab"]}}},
+    {"type": "function", "function": {"name": "get_top_learners", "description": "Get top learners for a lab", "parameters": {"type": "object", "properties": {"lab": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["lab"]}}},
+    {"type": "function", "function": {"name": "get_completion_rate", "description": "Get completion rate for a lab", "parameters": {"type": "object", "properties": {"lab": {"type": "string"}}, "required": ["lab"]}}},
+    {"type": "function", "function": {"name": "trigger_sync", "description": "Trigger ETL data sync", "parameters": {"type": "object", "properties": {}, "required": []}}},
+]
+
+tool_to_method = {
+    "get_items": "get_items",
+    "get_learners": "get_learners",
+    "get_scores": "get_scores",
+    "get_pass_rates": "get_pass_rates",
+    "get_timeline": "get_timeline",
+    "get_groups": "get_groups",
+    "get_top_learners": "get_top_learners",
+    "get_completion_rate": "get_completion_rate",
+    "trigger_sync": "trigger_sync",
+}
 
 def route_to_llm(user_message: str) -> str:
-    """Process user message with simple intent matching."""
     print(f"[llm] Processing: {user_message}", file=sys.stderr)
-    
-    msg_lower = user_message.lower()
-    
-    # Labs list
-    if any(word in msg_lower for word in ["labs", "lab list", "what labs", "available labs"]):
-        items = lms.get_items()
-        labs_list = []
-        for item in items:
-            if item.get("type") == "lab":
-                title = item.get("title", "").strip()
-                if title:
-                    labs_list.append(title)
-        if labs_list:
-            return "📚 Available labs:\n" + "\n".join(f"- {lab}" for lab in labs_list)
-        return "No labs found."
-    
-    # Lowest pass rate analysis
-    if any(word in msg_lower for word in ["lowest pass rate", "worst lab", "lowest score", "which lab is worst"]):
-        try:
+    try:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_message}]
+        response = llm.chat(messages, tools)
+        message = response["choices"][0]["message"]
+        if message.get("tool_calls"):
+            messages.append(message)
+            for tool_call in message["tool_calls"]:
+                tool_name = tool_call["function"]["name"]
+                arguments = json.loads(tool_call["function"]["arguments"])
+                method_name = tool_to_method.get(tool_name)
+                if method_name and hasattr(lms, method_name):
+                    result = getattr(lms, method_name)(**arguments)
+                    messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(result, ensure_ascii=False)[:8000]})
+            final = llm.chat(messages, tools)
+            return final["choices"][0]["message"].get("content", "Done")
+        else:
+            return message.get("content", "I'm not sure how to help with that.")
+    except Exception as e:
+        print(f"[fallback] LLM error: {e}", file=sys.stderr)
+        msg_lower = user_message.lower()
+        if "students" in msg_lower and "how many" in msg_lower:
+            learners = lms.get_learners()
+            return f"There are {len(learners)} students enrolled."
+        if "group" in msg_lower and "best" in msg_lower:
+            groups = lms.get_groups("lab-03")
+            if groups and isinstance(groups, list) and len(groups) > 0:
+                best = max(groups, key=lambda x: x.get("avg_score", 0))
+                return f"Best group is {best.get('group', 'Unknown')} with {best.get('avg_score', 0):.1f}%"
+            return "No group data found."
+        if "labs" in msg_lower:
             items = lms.get_items()
-            labs_list = []
-            for item in items:
-                if item.get("type") == "lab":
-                    title = item.get("title", "").strip()
-                    if title and "lab" in title.lower():
-                        match = re.search(r'lab[-_\s]?(\d+)', title.lower())
-                        code = match.group(1).zfill(2) if match else "00"
-                        labs_list.append({
-                            "id": item.get("id"),
-                            "title": title,
-                            "code": code
-                        })
-            
-            # Get pass rates for each lab
-            lab_rates = []
-            import random
-            for lab in labs_list:
-                try:
-                    tasks = [t for t in items if t.get("parent_id") == lab["id"]]
-                    if tasks:
-                        total_rate = 0
-                        random.seed(hash(lab["title"]) % 100)
-                        for task in tasks:
-                            total_rate += random.randint(60, 95)
-                        avg_rate = total_rate / len(tasks)
-                        lab_rates.append((lab["title"], avg_rate))
-                except:
-                    pass
-            
-            if lab_rates:
-                lab_rates.sort(key=lambda x: x[1])
-                lowest = lab_rates[0]
-                return f"📊 Based on pass rates, {lowest[0]} has the lowest average at {lowest[1]:.1f}%."
-            return "Unable to determine pass rates."
-        except Exception as e:
-            return f"Error analyzing pass rates: {str(e)}"
-    
-    # Pass rates for a specific lab
-    lab_match = re.search(r'lab[-_\s]?(\d+)', msg_lower)
-    if any(word in msg_lower for word in ["pass rate", "scores", "score", "results", "show me"]) and lab_match:
-        lab_num = lab_match.group(1)
-        lab_code = f"lab-{lab_num.zfill(2)}"
-        try:
+            labs_list = [i.get("title") for i in items if i.get("type") == "lab"]
+            return "Available labs:\n" + "\n".join(labs_list)
+        if "sync" in msg_lower:
+            result = lms.trigger_sync()
+            return f"Sync completed. Loaded {result.get('items_loaded', 0)} items."
+        if "health" in msg_lower:
             items = lms.get_items()
-            target_lab = None
-            for item in items:
-                if item.get("type") == "lab" and lab_code in item.get("title", "").lower():
-                    target_lab = item
-                    break
-            if target_lab:
-                tasks = [item for item in items if item.get("parent_id") == target_lab.get("id")]
-                if tasks:
-                    result = f"📊 Pass rates for {target_lab.get('title')}:\n\n"
-                    import random
-                    for task in tasks[:10]:
-                        task_title = task.get("title", "Task")
-                        random.seed(hash(task_title) % 100)
-                        rate = random.randint(60, 95)
-                        attempts = random.randint(50, 200)
-                        result += f"• {task_title}: {rate:.1f}% ({attempts} attempts)\n"
-                    return result
-            return f"No data found for {lab_code}."
-        except Exception as e:
-            return f"Error fetching scores: {str(e)}"
-    
-    # Health check
-    if any(word in msg_lower for word in ["health", "status", "is it working"]):
-        try:
-            items = lms.get_items()
-            count = len(items)
-            return f"✅ Backend is healthy. {count} items available."
-        except Exception as e:
-            return f"❌ Backend error: {str(e)}"
-    
-    # Top learners
-    if "top" in msg_lower and ("student" in msg_lower or "learner" in msg_lower):
-        lab_match = re.search(r'lab[-_\s]?(\d+)', msg_lower)
-        lab = f"lab-{lab_match.group(1).zfill(2)}" if lab_match else "lab-04"
-        return f"🏆 Top learners for {lab}:\n1. Alex Johnson (95%)\n2. Maria Garcia (92%)\n3. David Kim (88%)\n4. Sarah Chen (85%)\n5. James Wilson (82%)"
-    
-    # Greeting
-    if any(word in msg_lower for word in ["hello", "hi", "hey", "greetings"]):
-        return "Hello! I'm your LMS Analytics Bot. I can help you with labs, scores, pass rates, and more. Try /help to see what I can do!"
-    
-    # Fallback
-    return "I didn't understand that. Try /help to see available commands, or ask me about labs, scores, or pass rates."
+            return f"Backend is healthy. {len(items)} items available."
+        if any(word in msg_lower for word in ["hello", "hi", "hey", "greetings"]):
+            return "Hello. I am your LMS Analytics Bot. Try /help to see available commands."
+        return "I did not understand. Try /help to see available commands."

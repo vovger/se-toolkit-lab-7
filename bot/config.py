@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     llm_api_key: Optional[str] = ""
     llm_api_base_url: Optional[str] = ""
     llm_api_model: str = "coder-model"
-    timeout_seconds: int = 5
+    timeout_seconds: int = 10
 
     class Config:
         env_file = ".env.bot.secret"

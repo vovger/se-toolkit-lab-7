@@ -6,7 +6,7 @@ class LMSClient:
     def __init__(self):
         self.base_url = settings.lms_api_base_url
         self.api_key = settings.lms_api_key
-        self.timeout = settings.timeout_seconds
+        self.timeout = getattr(settings, 'timeout_seconds', 5)
 
     def _request(self, endpoint: str) -> Optional[Dict[str, Any]]:
         """Make authenticated GET request to LMS API."""
@@ -33,7 +33,10 @@ class LMSClient:
 
     def get_pass_rates(self, lab: str) -> Dict[str, Any]:
         """Fetch pass rates for a specific lab."""
-        return self._request(f"/analytics/pass-rates?lab={lab}")
+        try:
+            return self._request(f"/analytics/pass-rates?lab={lab}")
+        except Exception:
+            return {}
 
     def get_health(self) -> bool:
         """Check if backend is reachable and has data."""

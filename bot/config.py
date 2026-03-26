@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     lms_api_base_url: str = "http://localhost:42002"
     lms_api_key: Optional[str] = None
     llm_api_key: Optional[str] = ""
-    llm_api_base_url: Optional[str] = ""
+    llm_api_base_url: Optional[str] = "http://localhost:42005/v1"
     llm_api_model: str = "coder-model"
     timeout_seconds: int = 10
 

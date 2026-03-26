@@ -26,22 +26,43 @@ class LMSClient:
         except Exception as e:
             raise Exception(f"Unexpected error: {str(e)}")
 
+    def _post(self, endpoint: str, data: dict = None) -> Optional[Dict[str, Any]]:
+        """Make authenticated POST request to LMS API."""
+        url = f"{self.base_url}{endpoint}"
+        headers = {"api-key": self.api_key, "Content-Type": "application/json"}
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.post(url, json=data or {}, headers=headers)
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            raise Exception(f"POST error: {str(e)}")
+
     def get_items(self) -> List[Dict[str, Any]]:
-        """Fetch all items (labs and tasks)."""
         data = self._request("/items/")
         return data if isinstance(data, list) else []
 
-    def get_pass_rates(self, lab: str) -> Dict[str, Any]:
-        """Fetch pass rates for a specific lab."""
-        try:
-            return self._request(f"/analytics/pass-rates?lab={lab}")
-        except Exception:
-            return {}
+    def get_learners(self) -> List[Dict[str, Any]]:
+        data = self._request("/learners/")
+        return data if isinstance(data, list) else []
 
-    def get_health(self) -> bool:
-        """Check if backend is reachable and has data."""
-        try:
-            items = self.get_items()
-            return len(items) > 0
-        except Exception:
-            return False
+    def get_scores(self, lab: str) -> Dict[str, Any]:
+        return self._request(f"/analytics/scores?lab={lab}")
+
+    def get_pass_rates(self, lab: str) -> Dict[str, Any]:
+        return self._request(f"/analytics/pass-rates?lab={lab}")
+
+    def get_timeline(self, lab: str) -> Dict[str, Any]:
+        return self._request(f"/analytics/timeline?lab={lab}")
+
+    def get_groups(self, lab: str) -> Dict[str, Any]:
+        return self._request(f"/analytics/groups?lab={lab}")
+
+    def get_top_learners(self, lab: str, limit: int = 5) -> Dict[str, Any]:
+        return self._request(f"/analytics/top-learners?lab={lab}&limit={limit}")
+
+    def get_completion_rate(self, lab: str) -> Dict[str, Any]:
+        return self._request(f"/analytics/completion-rate?lab={lab}")
+
+    def trigger_sync(self) -> Dict[str, Any]:
+        return self._post("/pipeline/sync", {})

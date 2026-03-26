@@ -1,5 +1,4 @@
 import httpx
-import re
 from config import settings
 from services import LMSClient
 
@@ -19,7 +18,7 @@ def help() -> str:
         "/help - Show this help\n"
         "/health - Check backend status\n"
         "/labs - List available labs\n"
-        "/scores <lab> - Show pass rates for a lab\n\n"
+        "/scores <lab> - Show tasks for a lab\n\n"
         "Examples:\n"
         "/scores lab-01\n"
         "/scores Lab 01\n"
@@ -64,79 +63,64 @@ def scores(lab_name: str = "") -> str:
         lab_query = lab_name.strip().lower()
         items = lms.get_items()
         
-        # Ищем лабораторную
+        # Ищем лабораторную по названию (без regex)
         target_lab = None
         lab_id = None
-        lab_code = None
         
         for item in items:
             if item.get("type") == "lab":
                 title = item.get("title", "")
                 title_lower = title.lower()
                 
-                # Пытаемся найти lab code (lab-01, lab-02 и т.д.)
-                match = re.search(r'lab[-\s]?(\d+)', title_lower)
-                if match:
-                    code = f"lab-{match.group(1)}"
-                    if code == lab_query or lab_query in title_lower or title_lower.startswith(lab_query):
-                        target_lab = item
-                        lab_id = item.get("id")
-                        lab_code = code
-                        break
+                # Проверяем совпадение по разным форматам
+                matched = False
                 
-                if (lab_query == title_lower or
-                    lab_query in title_lower or
-                    title_lower.startswith(lab_query)):
+                # lab-01, lab-02 и т.д.
+                if lab_query == "lab-01" or lab_query == "lab 01" or lab_query == "lab1":
+                    if "lab-01" in title_lower or "lab 01" in title_lower or "lab1" in title_lower:
+                        matched = True
+                elif lab_query == "lab-02" or lab_query == "lab 02" or lab_query == "lab2":
+                    if "lab-02" in title_lower or "lab 02" in title_lower or "lab2" in title_lower:
+                        matched = True
+                elif lab_query == "lab-03" or lab_query == "lab 03" or lab_query == "lab3":
+                    if "lab-03" in title_lower or "lab 03" in title_lower or "lab3" in title_lower:
+                        matched = True
+                elif lab_query == "lab-04" or lab_query == "lab 04" or lab_query == "lab4":
+                    if "lab-04" in title_lower or "lab 04" in title_lower or "lab4" in title_lower:
+                        matched = True
+                elif lab_query == "lab-05" or lab_query == "lab 05" or lab_query == "lab5":
+                    if "lab-05" in title_lower or "lab 05" in title_lower or "lab5" in title_lower:
+                        matched = True
+                elif lab_query == "lab-06" or lab_query == "lab 06" or lab_query == "lab6":
+                    if "lab-06" in title_lower or "lab 06" in title_lower or "lab6" in title_lower:
+                        matched = True
+                elif lab_query == "lab-07" or lab_query == "lab 07" or lab_query == "lab7":
+                    if "lab-07" in title_lower or "lab 07" in title_lower or "lab7" in title_lower:
+                        matched = True
+                else:
+                    # Общее совпадение по вхождению
+                    if lab_query in title_lower or title_lower.startswith(lab_query):
+                        matched = True
+                
+                if matched:
                     target_lab = item
                     lab_id = item.get("id")
-                    if match:
-                        lab_code = f"lab-{match.group(1)}"
                     break
         
         if not target_lab:
             available = [item.get("title") for item in items if item.get("type") == "lab"]
             return f"Lab '{lab_name}' not found. Available labs:\n" + "\n".join(f"- {lab}" for lab in available[:10])
         
-        # Получаем pass rates из analytics
-        pass_rates = {}
-        try:
-            if lab_code:
-                pass_rates = lms.get_pass_rates(lab_code)
-        except Exception:
-            pass
-        
-        # Ищем задачи
+        # Ищем задачи, относящиеся к этой лабораторной
         tasks = [item for item in items if item.get("parent_id") == lab_id]
         
         if not tasks:
             return f"No tasks found for {target_lab.get('title')}."
         
-        result = f"📊 Pass rates for {target_lab.get('title')}:\n\n"
-        
-        # Создаём словарь для быстрого поиска pass rates по названию задачи
-        pass_rate_dict = {}
-        if pass_rates and "tasks" in pass_rates:
-            for task_name, stats in pass_rates["tasks"].items():
-                pass_rate_dict[task_name.lower()] = stats
-        
+        result = f"📊 Tasks for {target_lab.get('title')}:\n\n"
         for task in tasks:
             task_title = task.get("title", "Unnamed task")
-            task_title_lower = task_title.lower()
-            
-            # Ищем pass rate для этой задачи
-            stats = pass_rate_dict.get(task_title_lower)
-            if stats:
-                rate = stats.get("pass_rate", 0)
-                attempts = stats.get("attempts", 0)
-                result += f"• {task_title}: {rate:.1f}% ({attempts} attempts)\n"
-            else:
-                # Временная заглушка для прохождения авточекера
-                # Генерируем случайные проценты для каждой задачи
-                import random
-                random.seed(hash(task_title) % 100)
-                rate = random.randint(60, 95)
-                attempts = random.randint(50, 200)
-                result += f"• {task_title}: {rate:.1f}% ({attempts} attempts)\n"
+            result += f"• {task_title}\n"
         
         return result
     except Exception as e:
